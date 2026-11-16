@@ -18,7 +18,7 @@ public class VideoService {
     private VideoRepository videoRepository;
 
     public List<VideoResponse> getAllVideos() {
-        return videoRepository.findAll().stream()
+        return videoRepository.findByAvailabilityStatusTrue().stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }

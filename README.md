@@ -9,7 +9,7 @@ A RESTful API built with **Spring Boot 3** for managing an online video rental s
 | Layer | Technology |
 |---|---|
 | Framework | Spring Boot 3.2 |
-| Security | Spring Security 6 — Basic Auth |
+| Security | Spring Security 6 — JWT (jjwt) + Basic login |
 | Persistence | Spring Data JPA + Hibernate |
 | Database | MySQL 8 |
 | Build tool | Maven |
@@ -42,7 +42,7 @@ mvn spring-boot:run
 ```
 
 The server starts at `http://localhost:8080`.  
-Hibernate creates the `users` and `videos` tables automatically on first run.
+Hibernate creates the `users`, `videos` and `rentals` tables automatically on first run.
 
 ### 5. Run tests
 ```bash
@@ -53,85 +53,48 @@ mvn test
 
 ## Authentication
 
-The API uses **HTTP Basic Auth**.  
-Add an `Authorization: Basic <base64(email:password)>` header to every private request.
+Stateless authentication with **JWT**:
+
+1. Register via `POST /auth/register` (public).
+2. Log in via `POST /auth/login` using **Basic Auth** (`email:password`). The response contains a JWT.
+3. Send `Authorization: Bearer <token>` on every private request.
+
+(HTTP Basic is also accepted on private endpoints for convenience.) Passwords are hashed with BCrypt.
 
 | Role | Permissions |
 |---|---|
-| `CUSTOMER` | Browse videos, view own profile |
+| `CUSTOMER` | Browse available videos, rent/return videos, view own rentals/profile |
 | `ADMIN` | Everything a CUSTOMER can do + create/update/delete videos |
+
+Design choices: both roles may rent videos; a user may hold at most **2 active rentals**; a rented video
+becomes unavailable until returned (row locks prevent double-renting under concurrency).
 
 ---
 
 ## API Endpoints
 
-### Auth
-
-| Method | Endpoint | Auth required | Description |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | No | Register a new user |
-| `GET` | `/api/auth/me` | Yes | Get current user profile |
-
-### Videos
-
-| Method | Endpoint | Auth required | Role | Description |
+| Method | Endpoint | Auth | Role | Description |
 |---|---|---|---|---|
-| `GET` | `/api/videos` | Yes | Any | List all videos |
-| `GET` | `/api/videos/{id}` | Yes | Any | Get a video by ID |
-| `POST` | `/api/videos` | Yes | ADMIN | Create a new video |
-| `PUT` | `/api/videos/{id}` | Yes | ADMIN | Update a video |
-| `DELETE` | `/api/videos/{id}` | Yes | ADMIN | Delete a video |
+| `POST` | `/auth/register` | No | - | Register (role defaults to CUSTOMER) |
+| `POST` | `/auth/login` | Basic | Any | Returns a JWT |
+| `GET` | `/auth/me` | Yes | Any | Current user profile |
+| `GET` | `/videos` | Yes | Any | List videos available for rent |
+| `GET` | `/videos/{id}` | Yes | Any | Get a video |
+| `POST` | `/videos` | Yes | ADMIN | Create a video |
+| `PUT` | `/videos/{id}` | Yes | ADMIN | Update a video |
+| `DELETE` | `/videos/{id}` | Yes | ADMIN | Delete a video |
+| `POST` | `/videos/{videoId}/rent` | Yes | Any | Rent a video |
+| `POST` | `/videos/{videoId}/return` | Yes | Any | Return a rented video |
+| `GET` | `/rentals` | Yes | Any | My active rentals |
 
----
-
-## Sample Requests
-
-### Register a customer
+### Sample requests
 ```http
-POST /api/auth/register
-Content-Type: application/json
+POST /auth/register
+{ "email": "alice@example.com", "password": "secret123", "firstName": "Alice", "lastName": "Smith" }
 
-{
-  "email": "alice@example.com",
-  "password": "secret123",
-  "firstName": "Alice",
-  "lastName": "Smith",
-  "role": "CUSTOMER"
-}
-```
-> `role` defaults to `CUSTOMER` if omitted.
+POST /auth/login            (Basic Auth alice@example.com:secret123)  ->  { "token": "...", "tokenType": "Bearer", ... }
 
-### Register an admin
-```http
-POST /api/auth/register
-Content-Type: application/json
-
-{
-  "email": "admin@example.com",
-  "password": "adminpass",
-  "firstName": "Admin",
-  "lastName": "User",
-  "role": "ADMIN"
-}
-```
-
-### Create a video (ADMIN)
-```http
-POST /api/videos
-Authorization: Basic YWRtaW5AZXhhbXBsZS5jb206YWRtaW5wYXNz
-Content-Type: application/json
-
-{
-  "title": "The Matrix",
-  "director": "Wachowski Sisters",
-  "genre": "Sci-Fi"
-}
-```
-
-### List all videos (any authenticated user)
-```http
-GET /api/videos
-Authorization: Basic YWxpY2VAZXhhbXBsZS5jb206c2VjcmV0MTIz
+POST /videos/1/rent         (Authorization: Bearer <token>)
 ```
 
 ---
@@ -150,10 +113,11 @@ All errors follow a consistent JSON shape:
 
 | HTTP Code | When |
 |---|---|
-| `400` | Duplicate email or bad request |
+| `400` | Validation failure, duplicate email or malformed request |
 | `401` | Missing or wrong credentials |
 | `403` | Authenticated but insufficient role |
-| `404` | Resource not found |
+| `404` | Resource not found (video, or no active rental to return) |
+| `409` | Video unavailable, or user already has 2 active rentals |
 
 ---
 
@@ -166,8 +130,9 @@ src/main/java/com/rentvideo/
 │   ├── SecurityConfig.java          # Basic Auth + authorization rules
 │   └── UserDetailsServiceImpl.java  # Loads user from DB for Spring Security
 ├── controller/
-│   ├── AuthController.java          # /api/auth/*
-│   └── VideoController.java         # /api/videos/*
+│   ├── RentalController.java        # /videos/{id}/rent|return, /rentals
+│   ├── AuthController.java          # /auth/*
+│   └── VideoController.java         # /videos/*
 ├── dto/
 │   ├── RegisterRequest.java
 │   ├── UserResponse.java

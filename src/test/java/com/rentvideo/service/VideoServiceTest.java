@@ -55,14 +55,14 @@ class VideoServiceTest {
                 .id(2L).title("Inception").director("Christopher Nolan")
                 .genre("Sci-Fi").availabilityStatus(true).build();
 
-        when(videoRepository.findAll()).thenReturn(Arrays.asList(video, video2));
+        when(videoRepository.findByAvailabilityStatusTrue()).thenReturn(Arrays.asList(video, video2));
 
         List<VideoResponse> result = videoService.getAllVideos();
 
         assertEquals(2, result.size());
         assertEquals("The Matrix", result.get(0).getTitle());
         assertEquals("Inception", result.get(1).getTitle());
-        verify(videoRepository).findAll();
+        verify(videoRepository).findByAvailabilityStatusTrue();
     }
 
     @Test

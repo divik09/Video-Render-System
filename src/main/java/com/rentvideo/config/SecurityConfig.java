@@ -9,9 +9,11 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -20,27 +22,32 @@ public class SecurityConfig {
     @Autowired
     private UserDetailsServiceImpl userDetailsService;
 
+    @Autowired
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
+            // Stateless: no HTTP session, every request carries its own credentials (JWT)
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // Public endpoint: registration
-                .requestMatchers(HttpMethod.POST, "/api/auth/register").permitAll()
+                .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
 
-                // Any authenticated user can browse videos
-                .requestMatchers(HttpMethod.GET, "/api/videos").authenticated()
-                .requestMatchers(HttpMethod.GET, "/api/videos/**").authenticated()
+                // Login: authenticated with Basic Auth (email:password), returns a JWT
+                .requestMatchers(HttpMethod.POST, "/auth/login").authenticated()
 
                 // Only ADMIN can create, update, delete videos
-                .requestMatchers(HttpMethod.POST, "/api/videos").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/videos/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/videos/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/videos").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/videos/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/videos/**").hasRole("ADMIN")
 
-                // All other endpoints require authentication
+                // Everything else (browse, rent, return, profile) needs authentication
                 .anyRequest().authenticated()
             )
             .httpBasic(Customizer.withDefaults())
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .userDetailsService(userDetailsService);
 
         return http.build();
